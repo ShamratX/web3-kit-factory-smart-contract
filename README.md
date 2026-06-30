@@ -2,12 +2,98 @@
 
 On-chain ERC-20 token factory for **BSC** and **Ethereum**. Anyone can deploy a new token through a single factory contract. Tokens support optional **immutable buy/sell tax** on PancakeSwap V2 and Uniswap V2 pairs.
 
-This README is the single source of truth for architecture, configuration, deployment, and integration.
+---
+
+## Features
+
+- **One-click token deploy** — single `createToken()` call deploys a new ERC-20 and mints full supply to the caller
+- **Multi-chain** — BSC mainnet/testnet, Ethereum mainnet, and Sepolia
+- **Flexible metadata** — custom name, symbol, decimals (0–18), and total supply
+- **Optional DEX tax** — separate immutable buy and sell tax (basis points)
+- **PancakeSwap & Uniswap V2** — tax applies on pair buys/sells after liquidity is added
+- **No admin backdoor** — no owner, pause, blacklist, or post-deploy mint on tokens
+- **OpenZeppelin ERC-20** — built on OpenZeppelin Contracts v5
+- **Hardhat ready** — compile, test, deploy, and verify scripts included
+- **Gas optimized** — Solidity compiler optimizer enabled (200 runs)
+
+---
+
+## Commands
+
+Install dependencies first:
+
+```bash
+npm install
+```
+
+Copy `.env.example` to `.env` and fill in your keys before deploy or verify.
+
+### Compile
+
+```bash
+npx hardhat compile
+```
+
+### Test
+
+```bash
+npm test
+```
+
+Gas report:
+
+```bash
+set REPORT_GAS=true && npm test
+```
+
+On macOS/Linux use `REPORT_GAS=true npm test`.
+
+### Deploy factory
+
+```bash
+# BSC testnet
+npm run deploy:factory -- --network bscTestnet
+
+# BSC mainnet
+npm run deploy:factory -- --network bsc
+
+# Ethereum Sepolia
+npm run deploy:factory -- --network sepolia
+
+# Ethereum mainnet
+npm run deploy:factory -- --network eth
+```
+
+The deploy script prints the factory address and the verify command for your network.
+
+### Verify on explorer
+
+Factory constructor takes **one argument**: the DEX router address.
+
+```bash
+# BSC testnet
+npx hardhat verify --network bscTestnet <FACTORY_ADDRESS> 0xD99D1c33F9fC3444f8101754aBC46c52416550D1
+
+# BSC mainnet
+npx hardhat verify --network bsc <FACTORY_ADDRESS> 0x10ED43C718714eb63d5aA57B78B54704E256024E
+
+# Sepolia
+npx hardhat verify --network sepolia <FACTORY_ADDRESS> 0xC532a74256D3Db42D0Bf7a0400fEFDbad7694008
+
+# Ethereum mainnet
+npx hardhat verify --network eth <FACTORY_ADDRESS> 0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D
+```
+
+Replace `<FACTORY_ADDRESS>` with your deployed factory address.
+
+For BSC verification, enable `BSCSCAN_API_KEY` in `hardhat.config.js`. Etherscan API key is used for Ethereum and Sepolia.
 
 ---
 
 ## Table of contents
 
+- [Features](#features)
+- [Commands](#commands)
 - [How it works](#how-it-works)
 - [Architecture](#architecture)
 - [Contracts](#contracts)
@@ -18,10 +104,7 @@ This README is the single source of truth for architecture, configuration, deplo
 - [Project structure](#project-structure)
 - [Setup](#setup)
 - [Environment variables](#environment-variables)
-- [Commands](#commands)
-- [Deploy factory](#deploy-factory)
 - [Create a token](#create-a-token)
-- [Verify on explorer](#verify-on-explorer)
 - [Frontend integration](#frontend-integration)
 - [Security notes](#security-notes)
 - [License](#license)
@@ -197,36 +280,6 @@ After deploy, copy the factory address into your frontend `w3kit/.env` using the
 
 ---
 
-## Commands
-
-| Task | Command |
-|------|---------|
-| Run tests | `npm test` |
-| Compile | `npx hardhat compile` |
-| Deploy factory | `npm run deploy:factory -- --network <name>` |
-| Gas report | `REPORT_GAS=true npm test` |
-
-Supported network names: `bscTestnet`, `bsc`, `sepolia`, `eth`.
-
----
-
-## Deploy factory
-
-Run `npm run deploy:factory` with the target network flag.
-
-The script will:
-
-1. Resolve the DEX router for the chain.
-2. Deploy `W3KitTokenFactory` with that router.
-3. Print the factory address and the `w3kit/.env` key to update.
-4. Print the Hardhat verify command.
-
-**Constructor argument:** one DEX router address.
-
-For BSC verification, enable `BSCSCAN_API_KEY` in `hardhat.config.js` (Etherscan key is used for ETH/Sepolia by default).
-
----
-
 ## Create a token
 
 After the factory is deployed, call **`createToken`** on the factory contract with name, symbol, decimals, totalSupply, buyTaxBps, sellTaxBps, and taxWallet.
@@ -235,14 +288,6 @@ After the factory is deployed, call **`createToken`** on the factory contract wi
 - **With tax:** set buy/sell bps (e.g. 500 = 5%, 1000 = 10%) and a valid `taxWallet` address.
 
 Listen for the **`TokenCreated`** event to get the new token address. Tax only applies after liquidity is added on the DEX pair (token + WBNB/WETH).
-
----
-
-## Verify on explorer
-
-Verify the **factory** on the block explorer with the router address as the single constructor argument.
-
-Individual **token** contracts are deployed by the factory — verify them separately on BscScan or Etherscan if needed, using the full constructor argument list.
 
 ---
 
