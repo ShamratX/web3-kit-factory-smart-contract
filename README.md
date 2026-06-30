@@ -30,21 +30,10 @@ This README is the single source of truth for architecture, configuration, deplo
 
 ## How it works
 
-1. **Deploy** `W3KitTokenFactory` once per chain (with the correct DEX router).
+1. **Deploy** `W3KitTokenFactory` once per chain with the correct DEX router.
 2. Users call **`createToken()`** on the factory.
-3. The factory deploys a new **`W3KitToken`** and mints the full supply to `msg.sender`.
+3. The factory deploys a new **`W3KitToken`** and mints the full supply to the caller.
 4. If tax is enabled, transfers through the token's DEX liquidity pair are taxed automatically after liquidity is added.
-
-```
-User wallet
-    │
-    ▼
-W3KitTokenFactory.createToken(...)
-    │
-    ├── validates inputs
-    ├── deploys W3KitToken
-    └── mints totalSupply → msg.sender
-```
 
 ---
 
@@ -76,56 +65,27 @@ flowchart TB
 | `W3KitTokenFactory` | Entry point. Validates inputs, deploys tokens, emits `TokenCreated`. |
 | `W3KitToken` | ERC-20 (OpenZeppelin v5). Optional immutable buy/sell tax on V2 DEX pairs. |
 
-**Stack:** Solidity `0.8.30` · Hardhat · OpenZeppelin Contracts `^5.6.1` · Ethers `^6`
+**Stack:** Solidity 0.8.30 · Hardhat · OpenZeppelin Contracts ^5.6.1 · Ethers ^6
 
 ---
 
 ## Contracts
 
-### `W3KitTokenFactory`
+### W3KitTokenFactory
 
-Immutable state:
-- `router` — DEX router address set at deploy time (PancakeSwap or Uniswap V2).
+- Stores one immutable **DEX router** address (PancakeSwap or Uniswap V2) set at deploy time.
+- Exposes **`createToken()`** — the only way to launch a new token from this factory.
+- Emits **`TokenCreated`** with creator, token address, metadata, supply, and tax settings.
 
-Main function:
+### W3KitToken
 
-```solidity
-function createToken(
-    string calldata name,
-    string calldata symbol,
-    uint8 decimals,
-    uint256 totalSupply,
-    uint16 buyTaxBps,
-    uint16 sellTaxBps,
-    address taxWallet
-) external returns (address token);
-```
-
-Event:
-
-```solidity
-event TokenCreated(
-    address indexed creator,
-    address indexed token,
-    string name,
-    string symbol,
-    uint8 decimals,
-    uint256 totalSupply,
-    uint16 buyTaxBps,
-    uint16 sellTaxBps,
-    address taxWallet
-);
-```
-
-### `W3KitToken`
-
-Standard ERC-20 with configurable `decimals`. Immutable fields set at creation:
+Standard ERC-20 with configurable decimals. Immutable at creation:
 
 | Field | Description |
 |-------|-------------|
 | `buyTaxBps` | Buy tax in basis points (100 bps = 1%) |
 | `sellTaxBps` | Sell tax in basis points |
-| `taxWallet` | Receives tax; must be `address(0)` when tax is off |
+| `taxWallet` | Receives tax; must be zero when tax is off |
 | `router` | Used to resolve the token/WETH (or WBNB) pair |
 
 No owner, no mint after creation, no tax changes after deploy — all tax settings are **immutable**.
@@ -136,36 +96,21 @@ No owner, no mint after creation, no tax changes after deploy — all tax settin
 
 | Parameter | Type | Notes |
 |-----------|------|-------|
-| `name` | `string` | Required. No max length (byte length = gas cost). |
-| `symbol` | `string` | Required. No max length. |
-| `decimals` | `uint8` | `0`–`18` (ERC-20 convention). `18` is most common on BSC/ETH. |
-| `totalSupply` | `uint256` | Raw smallest units (like wei). `0` not allowed. |
-| `buyTaxBps` | `uint16` | `0`–`10000` (100% max). `0` = no buy tax. |
-| `sellTaxBps` | `uint16` | `0`–`10000`. `0` = no sell tax. |
-| `taxWallet` | `address` | Required when any tax > 0; must be zero when tax is off. |
+| `name` | string | Required. No max length (longer strings cost more gas). |
+| `symbol` | string | Required. No max length. |
+| `decimals` | uint8 | 0–18. 18 is most common on BSC and Ethereum. |
+| `totalSupply` | uint256 | Raw smallest units. Zero is not allowed. |
+| `buyTaxBps` | uint16 | 0–10000 (100% max). 0 = no buy tax. |
+| `sellTaxBps` | uint16 | 0–10000. 0 = no sell tax. |
+| `taxWallet` | address | Required when any tax is set; must be zero when tax is off. |
 
-### `totalSupply` and decimals
-
-`totalSupply` is **not** human-readable — it includes decimal places.
-
-| Goal | decimals | totalSupply (example) |
-|------|----------|------------------------|
-| 1,000,000 tokens | 18 | `1_000_000 × 10^18` |
-| 1,000,000 tokens | 8 | `1_000_000 × 10^8` |
-| 1,000,000 tokens | 6 | `1_000_000 × 10^6` |
-
-With ethers.js:
-
-```javascript
-ethers.parseUnits("1000000", 18); // 18 decimals
-ethers.parseUnits("1000000", 8);  // 8 decimals
-```
+**totalSupply and decimals:** supply must be entered in smallest units. For 1,000,000 tokens with 18 decimals, use 1,000,000 × 10¹⁸. With 8 decimals, use 1,000,000 × 10⁸.
 
 ---
 
 ## DEX tax logic
 
-Tax applies only when a **liquidity pair exists** on the chain DEX (resolved via `router.factory().getPair(token, WETH/WBNB)`).
+Tax applies only when a **liquidity pair exists** on the chain DEX (resolved via the router's factory and WETH/WBNB pair).
 
 | Transfer direction | Tax applied |
 |--------------------|-------------|
@@ -176,11 +121,9 @@ Tax applies only when a **liquidity pair exists** on the chain DEX (resolved via
 
 Tax formula: `taxAmount = amount × taxBps / 10_000`
 
-**Example:** `sellTaxBps = 1000` (10%) on a 1000 token sell → 100 to `taxWallet`, 900 to the pair.
+**Example:** 10% sell tax on 1000 tokens → 100 to `taxWallet`, 900 to the pair.
 
-Compatible with:
-- **BSC:** PancakeSwap V2
-- **Ethereum:** Uniswap V2 Router02
+Compatible with **PancakeSwap V2** (BSC) and **Uniswap V2 Router02** (Ethereum).
 
 ---
 
@@ -190,45 +133,38 @@ Compatible with:
 |------|-------|
 | Empty name | `EmptyName` |
 | Empty symbol | `EmptySymbol` |
-| `decimals > 18` | `DecimalsTooHigh` |
-| `totalSupply == 0` | `ZeroSupply` |
-| Tax on, `taxWallet == 0` | `TaxWalletRequired` |
-| Tax off, `taxWallet != 0` | `TaxWalletMustBeZero` |
-| Factory deploy with zero router | `ZeroRouter` |
+| decimals > 18 | `DecimalsTooHigh` |
+| totalSupply == 0 | `ZeroSupply` |
+| Tax on, taxWallet is zero | `TaxWalletRequired` |
+| Tax off, taxWallet is set | `TaxWalletMustBeZero` |
+| Factory deployed with zero router | `ZeroRouter` |
 
 ---
 
 ## Supported networks
 
-Hardhat network names and chain IDs from `hardhat.config.js`:
-
 | Network | Hardhat name | Chain ID | DEX router |
 |---------|--------------|----------|------------|
-| BSC Mainnet | `bsc` | 56 | `0x10ED43C718714eb63d5aA57B78B54704E256024E` (PancakeSwap V2) |
-| BSC Testnet | `bscTestnet` | 97 | `0xD99D1c33F9fC3444f8101754aBC46c52416550D1` (PancakeSwap V2) |
-| Ethereum Mainnet | `eth` | 1 | `0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D` (Uniswap V2) |
-| Sepolia | `sepolia` | 11155111 | `0xC532a74256D3Db42D0Bf7a0400fEFDbad7694008` (community Uniswap V2) |
+| BSC Mainnet | `bsc` | 56 | PancakeSwap V2 — `0x10ED43C718714eb63d5aA57B78B54704E256024E` |
+| BSC Testnet | `bscTestnet` | 97 | PancakeSwap V2 — `0xD99D1c33F9fC3444f8101754aBC46c52416550D1` |
+| Ethereum Mainnet | `eth` | 1 | Uniswap V2 — `0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D` |
+| Sepolia | `sepolia` | 11155111 | Community Uniswap V2 — `0xC532a74256D3Db42D0Bf7a0400fEFDbad7694008` |
 
-Routers are selected automatically in `scripts/deploy-factory.js` by `chainId`.
+Routers are picked automatically in `scripts/deploy-factory.js` by chain ID.
 
 ---
 
 ## Project structure
 
-```
-├── contracts/
-│   ├── W3KitTokenFactory.sol   # Factory — deploy once per chain
-│   ├── W3KitToken.sol          # ERC-20 + optional DEX tax
-│   └── mocks/
-│       └── MockUniswapV2.sol   # Test doubles for DEX
-├── scripts/
-│   └── deploy-factory.js       # Deploy factory + print verify command
-├── test/
-│   └── W3KitTokenFactory.test.js
-├── hardhat.config.js
-├── .env.example
-└── package.json
-```
+| Path | Purpose |
+|------|---------|
+| `contracts/W3KitTokenFactory.sol` | Factory — deploy once per chain |
+| `contracts/W3KitToken.sol` | ERC-20 + optional DEX tax |
+| `contracts/mocks/MockUniswapV2.sol` | Test doubles for DEX |
+| `scripts/deploy-factory.js` | Deploy factory and print verify steps |
+| `test/W3KitTokenFactory.test.js` | Contract tests |
+| `hardhat.config.js` | Networks and compiler settings |
+| `.env.example` | Environment variable template |
 
 ---
 
@@ -236,13 +172,9 @@ Routers are selected automatically in `scripts/deploy-factory.js` by `chainId`.
 
 **Requirements:** Node.js 18+, npm
 
-```bash
-git clone <repo-url>
-cd "Web3 Kit Token Factory"
-npm install
-cp .env.example .env
-# Edit .env with your private key, RPC URLs, and API keys
-```
+1. Clone the repository.
+2. Run `npm install`.
+3. Copy `.env.example` to `.env` and fill in your private key, RPC URLs, and API keys.
 
 ---
 
@@ -252,7 +184,7 @@ Copy `.env.example` → `.env`. Never commit `.env`.
 
 | Variable | Required | Purpose |
 |----------|----------|---------|
-| `PRIVATE_KEY` | Deploy / on-chain tx | Wallet key (64 hex chars, **no** `0x` prefix) |
+| `PRIVATE_KEY` | Deploy / on-chain tx | Wallet key (64 hex chars, no `0x` prefix) |
 | `ETH_SEPOLIA_RPC_URL` | Sepolia | RPC endpoint |
 | `ETH_MAINNET_RPC_URL` | Ethereum mainnet | RPC endpoint |
 | `BSC_TESTNET_RPC_URL` | BSC testnet | RPC endpoint |
@@ -261,116 +193,68 @@ Copy `.env.example` → `.env`. Never commit `.env`.
 | `BSCSCAN_API_KEY` | Verify on BscScan | [bscscan.com/myapikey](https://bscscan.com/myapikey) |
 | `TOKEN_FACTORY_CONTRACT_ADDRESS_*` | Optional | Local record of deployed factory per network |
 
-After deploy, copy the factory address into your frontend `w3kit/.env` using the same key names printed by the deploy script.
+After deploy, copy the factory address into your frontend `w3kit/.env` using the key names printed by the deploy script.
 
 ---
 
 ## Commands
 
-```bash
-# Run all tests
-npm test
+| Task | Command |
+|------|---------|
+| Run tests | `npm test` |
+| Compile | `npx hardhat compile` |
+| Deploy factory | `npm run deploy:factory -- --network <name>` |
+| Gas report | `REPORT_GAS=true npm test` |
 
-# Compile contracts
-npx hardhat compile
-
-# Deploy factory (append --network <name>)
-npm run deploy:factory -- --network bscTestnet
-npm run deploy:factory -- --network bsc
-npm run deploy:factory -- --network sepolia
-npm run deploy:factory -- --network eth
-
-# Gas report
-REPORT_GAS=true npx hardhat test
-```
+Supported network names: `bscTestnet`, `bsc`, `sepolia`, `eth`.
 
 ---
 
 ## Deploy factory
 
-```bash
-npm run deploy:factory -- --network bscTestnet
-```
+Run `npm run deploy:factory` with the target network flag.
 
 The script will:
-1. Resolve the DEX router for the chain
-2. Deploy `W3KitTokenFactory(router)`
-3. Print the factory address and `w3kit/.env` key to update
-4. Print the `hardhat verify` command
 
-**Constructor argument:** DEX router address (one address).
+1. Resolve the DEX router for the chain.
+2. Deploy `W3KitTokenFactory` with that router.
+3. Print the factory address and the `w3kit/.env` key to update.
+4. Print the Hardhat verify command.
 
-Example verify (BSC testnet):
+**Constructor argument:** one DEX router address.
 
-```bash
-npx hardhat verify --network bscTestnet <FACTORY_ADDRESS> <ROUTER_ADDRESS>
-```
-
-For BSC verification, enable `BSCSCAN_API_KEY` in `hardhat.config.js` (currently commented out; Etherscan key is used for ETH/Sepolia).
+For BSC verification, enable `BSCSCAN_API_KEY` in `hardhat.config.js` (Etherscan key is used for ETH/Sepolia by default).
 
 ---
 
 ## Create a token
 
-After the factory is deployed, call `createToken` on the factory contract.
+After the factory is deployed, call **`createToken`** on the factory contract with name, symbol, decimals, totalSupply, buyTaxBps, sellTaxBps, and taxWallet.
 
-### No tax
+- **No tax:** set both tax bps to `0` and `taxWallet` to the zero address.
+- **With tax:** set buy/sell bps (e.g. 500 = 5%, 1000 = 10%) and a valid `taxWallet` address.
 
-```javascript
-const factory = await ethers.getContractAt("W3KitTokenFactory", FACTORY_ADDRESS);
-
-const tx = await factory.createToken(
-  "My Token",           // name
-  "MTK",                // symbol
-  18,                   // decimals
-  ethers.parseUnits("1000000", 18), // totalSupply
-  0,                    // buyTaxBps
-  0,                    // sellTaxBps
-  ethers.ZeroAddress    // taxWallet (must be zero when no tax)
-);
-const receipt = await tx.wait();
-// Parse TokenCreated event for the new token address
-```
-
-### With tax (5% buy, 10% sell)
-
-```javascript
-await factory.createToken(
-  "Tax Token",
-  "TAX",
-  18,
-  ethers.parseUnits("1000000", 18),
-  500,                  // 5% buy  (500 bps)
-  1000,                 // 10% sell (1000 bps)
-  "0xYourTaxWalletAddress"
-);
-```
-
-Tax only activates after liquidity is added on the DEX pair (token + WBNB/WETH).
+Listen for the **`TokenCreated`** event to get the new token address. Tax only applies after liquidity is added on the DEX pair (token + WBNB/WETH).
 
 ---
 
 ## Verify on explorer
 
-**Factory** (constructor = router address):
+Verify the **factory** on the block explorer with the router address as the single constructor argument.
 
-```bash
-npx hardhat verify --network bsc <FACTORY_ADDRESS> 0x10ED43C718714eb63d5aA57B78B54704E256024E
-```
-
-**Token** contracts are deployed by the factory via `new W3KitToken(...)` — verify individually on BscScan/Etherscan with the full constructor argument list if needed.
+Individual **token** contracts are deployed by the factory — verify them separately on BscScan or Etherscan if needed, using the full constructor argument list.
 
 ---
 
 ## Frontend integration
 
 1. Set `TOKEN_FACTORY_CONTRACT_ADDRESS_<NETWORK>` in `w3kit/.env`.
-2. Load factory ABI from `artifacts/contracts/W3KitTokenFactory.sol/W3KitTokenFactory.json`.
+2. Load the factory ABI from `artifacts/contracts/W3KitTokenFactory.sol/W3KitTokenFactory.json`.
 3. Call `createToken` with user-supplied parameters.
 4. Listen for `TokenCreated` to get the new token address.
-5. Match `totalSupply` to the selected `decimals` (`parseUnits`).
+5. Match `totalSupply` to the selected `decimals`.
 
-Do **not** add client-side name/symbol length limits unless you want UX constraints — the on-chain factory has no length cap.
+The on-chain factory has no name/symbol length cap — do not add client-side length limits unless you want extra UX constraints.
 
 ---
 
@@ -387,4 +271,4 @@ Do **not** add client-side name/symbol length limits unless you want UX constrai
 
 ## License
 
-MIT (contracts: `SPDX-License-Identifier: MIT`)
+MIT (contracts: SPDX-License-Identifier: MIT)
